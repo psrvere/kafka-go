@@ -114,7 +114,7 @@ func (l *Log) Append(payload []byte) (uint64, error) {
 
 	offset := l.nextOffset
 	pos := recordPosition(offset, l.fileRecordSize)
-	record := getCRCRecord(payload)
+	record := getCRCRecord(payload, l.fileRecordSize)
 
 	if _, err := l.f.WriteAt(record, pos); err != nil {
 		return 0, fmt.Errorf("log: error appending to file: %v", err)

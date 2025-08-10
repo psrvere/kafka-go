@@ -8,10 +8,15 @@ func recordPosition(offset uint64, fileRecordSize int) int64 {
 	return int64(offset) * int64(fileRecordSize)
 }
 
-func getCRCRecord(payload []byte) []byte {
+func getCRCRecord(payload []byte, fileRecordSize int) []byte {
 	crc := ComputeCRC32C(payload)
-	buf := make([]byte, headerSize)
-	binary.BigEndian.PutUint32(buf, crc) // byte(value) will truncate crc to 8 bits as byte is unit8 in Go
+	// create a buffer of fileRecordSize instead of headerSize to avoid reallocation
+	// when header and record bytes are combined
+	buf := make([]byte, fileRecordSize)
+	// byte(value) will truncate crc to 8 bits as byte is unit8 in Go
+	binary.BigEndian.PutUint32(buf[:headerSize], crc)
 
-	return append(buf, payload...)
+	// copy is more efficient than append(buf, payload...)
+	copy(buf[headerSize:], payload)
+	return buf
 }
