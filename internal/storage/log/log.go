@@ -62,12 +62,12 @@ func Open(cfg Config) (*Log, error) {
 	if err != nil {
 		return nil, fmt.Errorf("log: error opening file: %v", err)
 	}
-	defer f.Close()
 
 	fileRecordSize := headerSize + cfg.RecordSize
 
 	fstat, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, fmt.Errorf("log: error getting file stats: %v", err)
 	}
 
@@ -77,6 +77,7 @@ func Open(cfg Config) (*Log, error) {
 	if rem := size % int64(fileRecordSize); rem != 0 {
 		newSize := size - rem
 		if err := f.Truncate(newSize); err != nil {
+			f.Close()
 			return nil, fmt.Errorf("log: error truncating file: %v", err)
 		}
 	}
@@ -84,6 +85,7 @@ func Open(cfg Config) (*Log, error) {
 	next := uint64(size / int64(fileRecordSize))
 
 	l := &Log{
+		mu:               &sync.RWMutex{},
 		f:                f,
 		recordSize:       cfg.RecordSize,
 		fileRecordSize:   fileRecordSize,
@@ -126,11 +128,67 @@ func (l *Log) Append(payload []byte) (uint64, error) {
 	switch l.fsyncPolicy {
 	case FsyncAlways:
 		if err := l.f.Sync(); err != nil {
-			return 0, fmt.Errorf("log: error writing to disk: %v", err)
+			return 0, fmt.Errorf("log: error saving data to disk: %v", err)
 		}
 		l.pendingSinceSync = 0
 		// TODO: Implement FsyncEveryN and FsyncInterval
 	}
 
 	return offset, nil
+}
+
+func (l *Log) Read(offset uint64) ([]byte, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if l.closed {
+		return nil, ErrClosed
+	}
+
+	if offset >= l.nextOffset {
+		return nil, ErrOffsetOutOfRange
+	}
+
+	pos := recordPosition(offset, l.fileRecordSize)
+	buf := make([]byte, l.fileRecordSize)
+	if _, err := l.f.ReadAt(buf, pos); err != nil {
+		return nil, fmt.Errorf("log: Error reading file: %v", err)
+	}
+
+	if !verifyCRC(buf) {
+		return nil, ErrCorruptRecord
+	}
+
+	payload := buf[headerSize:]
+	out := make([]byte, len(payload))
+	copy(out, payload)
+	return out, nil
+
+	// Here we copy payload value into a new array to decouple client's copy
+	// of array wiht our service. This allows us to enable buffer pooling or using
+	// scratch buffer across calls in future
+}
+
+func (l *Log) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.closed {
+		return nil
+	}
+
+	l.closed = true
+	// Sync remaining data before closing
+
+	if err := l.f.Sync(); err != nil {
+		_ = l.f.Close()
+		return fmt.Errorf("log: error saving data to disk: %v", err)
+	}
+	l.pendingSinceSync = 0
+
+	if err := l.f.Close(); err != nil {
+		return fmt.Errorf("log: error closing file: %v", err)
+	}
+
+	return nil
 }
