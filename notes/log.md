@@ -60,3 +60,25 @@ Big Endianness: stores the most significant byte first. E.g., 0x12345678 stored 
 Little Endianness: stores the least significant byte first. E.g., 0x12345678 stored as [0x78, 0x56, 0x34, 0x12]
 
 Since the CRC32C value is used as a checksum, it needs to be consistent across computer architectures.
+
+## Kafka's Real Log Design
+
+1. Segmentation:
+Kafka's log is split into multiple segment files per topic partition. In Kafka segments are roll over (closed and new on started) based on configurable policies like size (default 1GB), time (default 168 hours or 7 days) etc. These segments are available for reading data but closed for writing new data. There is always an active segment open for writing new data. The segmentation avoids file growing indefinitely which can lead to issues like file descriptor limits or slow recovery. 
+
+2. Sparse Indexes:
+It has sparse indexes i.e. not every message is indexed (typically every 4KB, it's configurable). Index maps offsets to physical positions. There are other indexes too: timestamp index - maps timestamps to offsets, transaction index - marks aborted transaction ranges. The offset index allows O(1) reads. Time index enables time based queries. Transaction Index helps skip over aborted transactions during reads.
+
+3. Variable Length & Batched Record Format:
+Messages are stored in variable length groups of records (record batches). Each batch has a header (base offset, length, etc.) followed by compressed or uncompressed records. Each individual record within the batch has fields like offset delta (relative to base), timestamp delta, key length, value length, headers, etc. There is one CRC32C per record batch. 
+
+4. Batch Header Metadata
+The Batch header includes fields like `baseOffset` (first offset in batch), `lastOffsetDelta` (to compute end offset), `firstTimestamp` and `maxTimestamp`, `CRC32C` etc.
+
+5. Compression and Efficiency
+Kafka supports batch level compression (gzip, snappy, etc.) to reduce storage and I/O. Compression is applied by producers before sending. Data is stored in compressed form on disk. Data is decompressed on fetch if needed.
+
+6. Timestamps
+Kafka records have timestamps (create time from producer or append time from broker). It also has time index for fast lookups. Timestamps are used for time based retention and stream processing (eg. windowing in Kafka streams)
+
+And a lot more features...
