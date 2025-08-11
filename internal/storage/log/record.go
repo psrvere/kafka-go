@@ -9,7 +9,7 @@ func recordPosition(offset uint64, fileRecordSize int) int64 {
 }
 
 func getCRCRecord(payload []byte, fileRecordSize int) []byte {
-	crc := ComputeCRC32C(payload)
+	crc := computeCRC32C(payload)
 	// create a buffer of fileRecordSize instead of headerSize to avoid reallocation
 	// when header and record bytes are combined
 	buf := make([]byte, fileRecordSize)
@@ -19,4 +19,14 @@ func getCRCRecord(payload []byte, fileRecordSize int) []byte {
 	// copy is more efficient than append(buf, payload...)
 	copy(buf[headerSize:], payload)
 	return buf
+}
+
+func verifyCRC(record []byte) bool {
+	haveCRC := record[:headerSize]
+	payload := record[headerSize:]
+	gotCRC := computeCRC32C(payload)
+	if binary.BigEndian.Uint32(haveCRC) == gotCRC {
+		return true
+	}
+	return false
 }
