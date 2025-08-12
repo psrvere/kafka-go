@@ -81,3 +81,65 @@ func (ix *sparseIndex) loadAll() error {
 	ix.entries = entries
 	return nil
 }
+
+func (ix *sparseIndex) appendEntry(e indexEntry) error {
+
+	if len(ix.entries) > 0 {
+		last := ix.entries[len(ix.entries)-1]
+		if e.relativeOffset < last.relativeOffset {
+			return fmt.Errorf("segment: non monotonic append: new=%d last=%d", e.relativeOffset, last.relativeOffset)
+		}
+		if e.relativeOffset == last.relativeOffset {
+			return nil
+		}
+	}
+
+	buf := make([]byte, indexEntrySize)
+	binary.BigEndian.PutUint32(buf[0:4], e.relativeOffset)
+	binary.BigEndian.PutUint64(buf[4:12], e.filePosition)
+
+	if _, err := ix.f.WriteAt(buf, 0); err != nil {
+		return fmt.Errorf("segment: error writing index to file: %w", err)
+	}
+
+	ix.entries = append(ix.entries, e)
+	return nil
+}
+
+func (ix *sparseIndex) searchNearest(target uint32) (indexEntry, bool) {
+	if target < ix.entries[0].relativeOffset {
+		return indexEntry{}, false
+	}
+
+	if len(ix.entries) == 0 {
+		return indexEntry{}, false
+	}
+
+	// use binary search to find nearest relative offset to target
+	lo, hi := 0, len(ix.entries)-1
+
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		ro := ix.entries[mid].relativeOffset
+		if ro == target {
+			return ix.entries[mid], true
+		}
+		if ro < target {
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	if hi >= 0 {
+		return ix.entries[hi], true
+	}
+	return indexEntry{}, false
+}
+
+func (ix *sparseIndex) lastRelativeOffset() (uint32, bool) {
+	if len(ix.entries) == 0 {
+		return 0, false
+	}
+	return ix.entries[len(ix.entries)-1].relativeOffset, true
+}
